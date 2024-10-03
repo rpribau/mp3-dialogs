@@ -1,11 +1,16 @@
+import os
 import subprocess
 import streamlit as st
 import whisper
 from datetime import datetime
 import pandas as pd
-import os
 import re
 from moviepy.editor import VideoFileClip
+
+# Configurar la variable de entorno XDG_RUNTIME_DIR
+os.environ['XDG_RUNTIME_DIR'] = '/tmp/runtime-dir'
+if not os.path.exists(os.environ['XDG_RUNTIME_DIR']):
+    os.makedirs(os.environ['XDG_RUNTIME_DIR'])
 
 def process_files(files):
     # Asegúrate de que el directorio temporal exista
