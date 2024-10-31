@@ -1,6 +1,7 @@
 import os
 import streamlit as st
 import whisper
+import torch
 from datetime import datetime
 import pandas as pd
 import re
@@ -16,6 +17,9 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 os.environ['XDG_RUNTIME_DIR'] = '/tmp/runtime-dir'
 if not os.path.exists(os.environ['XDG_RUNTIME_DIR']):
     os.makedirs(os.environ['XDG_RUNTIME_DIR'])
+
+# Verifica si tienes una GPU disponible para Whisper
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Función para extraer las características MFCC
 def extract_mfcc(filename):
@@ -37,7 +41,6 @@ def predict_emotion(audio_path, model):
     return predicted_emotion, probability
 
 def process_files(files, emotion_model):
-    # Asegúrate de que el directorio temporal exista
     temp_dir = "temp"
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
@@ -47,16 +50,20 @@ def process_files(files, emotion_model):
     for file in files:
         try:
             temp_file_path = os.path.join(temp_dir, file.name)
-            
             with open(temp_file_path, 'wb') as f:
                 f.write(file.getbuffer())
             
             # Extraer la fecha del nombre del archivo si está presente
+            # Reemplaza esta sección de código en process_files:
             date_match = re.search(r'(\d{4})(\d{2})(\d{2})', file.name)
             if date_match:
-                creation_date = datetime.strptime(date_match.group(0), "%Y%m%d")
+                try:
+                    creation_date = datetime.strptime(date_match.group(0), "%Y%m%d")
+                except ValueError:
+                    creation_date = datetime.now()  # Si el formato de fecha es incorrecto
             else:
-                creation_date = datetime.now()
+                creation_date = datetime.now()  # Si no hay fecha en el nombre del archivo, usa la fecha actual
+
 
             if file.name.endswith('.mp3'):
                 audio_path = temp_file_path
@@ -68,15 +75,14 @@ def process_files(files, emotion_model):
             else:
                 continue
 
-            # Cargar el modelo Whisper y transcribir el archivo
-            whisper_model = whisper.load_model("small")
+            # Cargar el modelo Whisper en el dispositivo correspondiente y transcribir
+            whisper_model = whisper.load_model("small", device=device)
             result = whisper_model.transcribe(audio_path)
             transcript = result['text']
 
             # Predecir la emoción
             emotion, probability = predict_emotion(audio_path, emotion_model)
 
-            # Añadir los datos al DataFrame
             data.append({
                 'Date': creation_date,
                 'Transcript': transcript,
