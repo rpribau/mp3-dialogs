@@ -8,6 +8,9 @@ from moviepy.editor import VideoFileClip
 from tensorflow.keras.models import load_model
 import numpy as np
 import librosa
+import warnings
+
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Configurar la variable de entorno XDG_RUNTIME_DIR
 os.environ['XDG_RUNTIME_DIR'] = '/tmp/runtime-dir'
