@@ -1,105 +1,125 @@
 import os
-import subprocess
 import streamlit as st
 import whisper
 from datetime import datetime
 import pandas as pd
 import re
 from moviepy.editor import VideoFileClip
+from tensorflow.keras.models import load_model
+import numpy as np
+import librosa
 
 # Configurar la variable de entorno XDG_RUNTIME_DIR
 os.environ['XDG_RUNTIME_DIR'] = '/tmp/runtime-dir'
 if not os.path.exists(os.environ['XDG_RUNTIME_DIR']):
     os.makedirs(os.environ['XDG_RUNTIME_DIR'])
 
-def process_files(files):
+# Función para extraer las características MFCC
+def extract_mfcc(filename):
+    y, sr = librosa.load(filename, duration=3, offset=0.5)
+    mfcc = np.mean(librosa.feature.mfcc(y=y, sr=sr, n_mfcc=40).T, axis=0)
+    return mfcc
+
+# Función para predecir emociones usando el modelo de emociones
+def predict_emotion(audio_path, model):
+    mfcc_features = extract_mfcc(audio_path)
+    X = np.array([mfcc_features])
+    X = np.expand_dims(X, -1)
+    
+    prediction = model.predict(X)
+    emotions = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'ps', 'sad']
+    predicted_emotion = emotions[np.argmax(prediction)]
+    probability = np.max(prediction)
+    
+    return predicted_emotion, probability
+
+def process_files(files, emotion_model):
     # Asegúrate de que el directorio temporal exista
     temp_dir = "temp"
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
 
-    # Inicializar una lista vacía para almacenar los datos
     data = []
 
     for file in files:
         try:
             temp_file_path = os.path.join(temp_dir, file.name)
             
-            # Guardar el archivo temporalmente en el disco
             with open(temp_file_path, 'wb') as f:
                 f.write(file.getbuffer())
             
-            # Extraer la fecha del nombre del archivo si está presente (por ejemplo, "audio_20230902.mp3")
+            # Extraer la fecha del nombre del archivo si está presente
             date_match = re.search(r'(\d{4})(\d{2})(\d{2})', file.name)
             if date_match:
                 creation_date = datetime.strptime(date_match.group(0), "%Y%m%d")
             else:
-                creation_date = datetime.now()  # Si no hay fecha en el nombre del archivo, usa la fecha actual
+                creation_date = datetime.now()
 
-            # Comprobar si el archivo es MP3 o MP4
             if file.name.endswith('.mp3'):
                 audio_path = temp_file_path
             elif file.name.endswith('.mp4'):
-                # Extraer audio de MP4
                 video = VideoFileClip(temp_file_path)
-                audio_path = os.path.join(temp_dir, f"{os.path.splitext(file.name)[0]}.mp3")
+                audio_path = os.path.join(temp_dir, f"{os.path.splitext(file.name)[0]}.wav")
                 video.audio.write_audiofile(audio_path)
                 video.close()
             else:
-                continue  # Si el archivo no es MP3 o MP4, saltarlo
+                continue
 
             # Cargar el modelo Whisper y transcribir el archivo
-            model = whisper.load_model("small")
-            result = model.transcribe(audio_path)
+            whisper_model = whisper.load_model("small")
+            result = whisper_model.transcribe(audio_path)
             transcript = result['text']
 
-            # Añadir la fecha, la transcripción y el nombre del archivo a la lista
-            data.append({'Date': creation_date, 'Transcript': transcript, 'Filename': file.name})
+            # Predecir la emoción
+            emotion, probability = predict_emotion(audio_path, emotion_model)
 
-            # Opcionalmente, eliminar los archivos temporales después de procesarlos
+            # Añadir los datos al DataFrame
+            data.append({
+                'Date': creation_date,
+                'Transcript': transcript,
+                'Filename': file.name,
+                'Emotion': emotion,
+                'Probability (%)': round(probability * 100, 2)
+            })
+
             os.remove(temp_file_path)
             if file.name.endswith('.mp4'):
                 os.remove(audio_path)
-                
+
         except Exception as e:
             st.error(f"Error processing file {file.name}: {e}")
 
-    # Crear un DataFrame a partir de la lista de datos
     df = pd.DataFrame(data)
     return df
 
-# Componentes de la GUI de Streamlit
-st.markdown("<h1 style='text-align: center; font-size: 48px;'>Extraer diálogos de audios MP3 y videos MP4</h1>", unsafe_allow_html=True)
+# Configuración de la app en Streamlit
+st.markdown("<h1 style='text-align: center; font-size: 48px;'>Extraer diálogos y emociones de audios y videos</h1>", unsafe_allow_html=True)
 
 st.markdown("""
 ## Instrucciones:
-1. **Sube tus archivos MP3 o MP4**: Usa el botón de abajo para seleccionar y subir múltiples archivos MP3 o MP4.
-2. **Procesar Archivos**: Haz clic en el botón "Procesar Archivos" para extraer las transcripciones.
-3. **Revisar y Descargar**: Revisa las transcripciones resultantes y descarga el archivo CSV.
+1. **Sube tus archivos MP3 o MP4**: Usa el botón para seleccionar y subir múltiples archivos MP3 o MP4.
+2. **Procesar Archivos**: Haz clic en el botón "Procesar Archivos" para extraer las transcripciones y emociones.
+3. **Revisar y Descargar**: Revisa los resultados y descarga el archivo CSV.
 
 ### Herramientas Utilizadas:
-- **Streamlit**: Para la creación de la interfaz de usuario.
-- **OpenAI Whisper**: Para la transcripción de los archivos de audio.
-- **MoviePy**: Para extraer el audio de archivos MP4.
-- **Pandas**: Para manejar y manipular los datos tabulares.
-- **Python**: Como lenguaje de programación principal.
-
----
-
-### Créditos:
-**Desarrollado por**: Roberto Priego Bautista  
-**GitHub**: [@rpribau](https://github.com/rpribau)
+- **Streamlit**: Para la interfaz.
+- **OpenAI Whisper**: Para transcripciones.
+- **Modelo de Emociones**: Para predecir la emoción en el audio.
+- **MoviePy y Librosa**: Para manejar archivos multimedia.
+- **Pandas**: Para manejo de datos.
 """)
 
 uploaded_files = st.file_uploader("Sube archivos .mp3 o .mp4", accept_multiple_files=True)
 
 if st.button("Procesar Archivos"):
     if uploaded_files:
-        df = process_files(uploaded_files)
+        # Cargar el modelo de emociones antes de procesar archivos
+        emotion_model = load_model('modelo_lstm.h5')
+        df = process_files(uploaded_files, emotion_model)
         st.dataframe(df)
 
         # Proveer una opción para descargar el CSV
         csv = df.to_csv(index=False)
-        st.download_button(label="Descargar CSV", data=csv, file_name="transcripts.csv", mime="text/csv")
+        st.download_button(label="Descargar CSV", data=csv, file_name="transcripts_emotions.csv", mime="text/csv")
     else:
         st.warning("Por favor, sube algunos archivos primero.")
